@@ -33,6 +33,7 @@ class Transaction:
     splits: tuple[SplitLine, ...] = ()
     transfer_id: str | None = None
     status: ClearedStatus = ClearedStatus.UNCLEARED
+    approved: bool = True
     memo: str = ""
 
     def lines(self) -> tuple[tuple[str, Decimal], ...]:

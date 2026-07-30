@@ -7,6 +7,7 @@ from ledger.money import ZERO, Amount, money
 from ledger.month import YMonth
 from ledger.payees import Payee
 from ledger.plan import PAYMENT_GROUP_ID, AutoAssignPreset, Plan
+from ledger.schedules import Frequency, ScheduledTransaction
 from ledger.targets import (
     BudgetView,
     CustomSubMode,
@@ -39,10 +40,12 @@ __all__ = [
     "CustomSubMode",
     "CustomTarget",
     "DebtPaymentTarget",
+    "Frequency",
     "LedgerError",
     "MonthlyTarget",
     "Payee",
     "Plan",
+    "ScheduledTransaction",
     "SplitLine",
     "SplitMismatchError",
     "Target",

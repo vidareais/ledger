@@ -19,6 +19,7 @@ from ledger.errors import LedgerError, SplitMismatchError, UnknownEntityError
 from ledger.money import ZERO, Amount, money
 from ledger.month import YMonth
 from ledger.payees import Payee
+from ledger.schedules import Frequency, ScheduledTransaction, next_occurrence
 from ledger.targets import Target
 from ledger.transactions import RTA_INFLOW, ClearedStatus, SplitLine, Transaction
 
@@ -39,6 +40,7 @@ class Plan:
         self.group_order: list[str] = []
         self.categories: dict[str, Category] = {}
         self.payees: dict[str, Payee] = {}
+        self.schedules: dict[str, ScheduledTransaction] = {}
         self._transactions: dict[str, Transaction] = {}
         self._txn_order: list[str] = []
         self._assigned: dict[tuple[str, YMonth], Decimal] = {}
@@ -430,6 +432,85 @@ class Plan:
                 )
         account.last_reconciled = when
         return adjustment
+
+    # -- scheduled transactions (section 8.2) -------------------------------
+
+    def add_schedule(
+        self,
+        account_id: str,
+        first_date: datetime.date,
+        amount: Amount,
+        frequency: Frequency,
+        *,
+        category_id: str | None = None,
+        payee: str | None = None,
+        memo: str = "",
+        today: datetime.date | None = None,
+    ) -> tuple[ScheduledTransaction, list[Transaction]]:
+        """Register a repeating transaction. Passing `today` reproduces the
+        observed creation behavior: any occurrence already due (the current
+        due date included) materializes immediately as a real, unapproved
+        transaction, and the schedule advances to the next future one."""
+        account = self._require_account(account_id)
+        self._validate_categorization(account, category_id, ())
+        payee_id = self._payee_by_name(payee).id if payee is not None else None
+        schedule = ScheduledTransaction(
+            self._new_id("sched"),
+            account_id,
+            first_date,
+            money(amount),
+            frequency,
+            first_date.day,
+            payee_id=payee_id,
+            category_id=category_id,
+            memo=memo,
+        )
+        self.schedules[schedule.id] = schedule
+        created = [] if today is None else self._materialize_schedule(schedule, today)
+        return schedule, created
+
+    def delete_schedule(self, schedule_id: str) -> None:
+        if schedule_id not in self.schedules:
+            raise UnknownEntityError(f"unknown schedule {schedule_id!r}")
+        del self.schedules[schedule_id]
+
+    def materialize_due(self, today: datetime.date) -> list[Transaction]:
+        """Every scheduled occurrence whose date has arrived becomes a real
+        transaction awaiting approval; each schedule advances past `today`."""
+        created: list[Transaction] = []
+        for schedule in self.schedules.values():
+            created.extend(self._materialize_schedule(schedule, today))
+        return created
+
+    def _materialize_schedule(
+        self, schedule: ScheduledTransaction, today: datetime.date
+    ) -> list[Transaction]:
+        created: list[Transaction] = []
+        while schedule.next_date <= today:
+            txn = Transaction(
+                self._new_id("txn"),
+                schedule.account_id,
+                schedule.next_date,
+                schedule.amount,
+                payee_id=schedule.payee_id,
+                category_id=schedule.category_id,
+                approved=False,
+                memo=schedule.memo,
+            )
+            self._record(txn)
+            created.append(txn)
+            schedule.next_date = next_occurrence(
+                schedule.next_date, schedule.frequency, schedule.anchor_day
+            )
+        return created
+
+    def approve(self, txn_id: str) -> Transaction:
+        updated = replace(self.get_transaction(txn_id), approved=True)
+        self._transactions[txn_id] = updated
+        return updated
+
+    def pending_approval(self) -> tuple[Transaction, ...]:
+        return tuple(t for t in self._ordered_txns() if not t.approved)
 
     # -- auto-assign (section 7) --------------------------------------------
 
