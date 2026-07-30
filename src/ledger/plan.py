@@ -74,6 +74,13 @@ class LoanPayment:
     interest_charge: Transaction | None
 
 
+class _Unset(Enum):
+    TOKEN = auto()
+
+
+_UNSET = _Unset.TOKEN
+
+
 class Plan:
     def __init__(self) -> None:
         self.accounts: dict[str, Account] = {}
@@ -218,12 +225,7 @@ class Plan:
             SplitLine(s.category_id, money(s.amount), s.memo) for s in splits
         )
         self._validate_categorization(account, category_id, split_lines)
-        if split_lines:
-            total = money(sum((line.amount for line in split_lines), ZERO))
-            if total != value:
-                raise SplitMismatchError(
-                    f"splits sum to {total}, transaction amount is {value}"
-                )
+        self._validate_split_total(split_lines, value)
         payee_id = self._payee_by_name(payee).id if payee is not None else None
         txn = Transaction(
             self._new_id("txn"),
@@ -304,6 +306,115 @@ class Plan:
         out_category = category_id if source.on_budget else None
         in_category = category_id if destination.on_budget else None
         return out_category, in_category
+
+    def update_transaction(
+        self,
+        txn_id: str,
+        *,
+        when: datetime.date | _Unset = _UNSET,
+        amount: Amount | _Unset = _UNSET,
+        category_id: str | None | _Unset = _UNSET,
+        splits: Iterable[SplitLine] | _Unset = _UNSET,
+        payee: str | None | _Unset = _UNSET,
+        memo: str | _Unset = _UNSET,
+    ) -> Transaction:
+        """Edit a transaction in place, re-running the same write-time
+        validation as add_transaction; nothing commits unless every check
+        passes. Reconciled transactions are locked. Transfer legs mirror
+        amount and date edits to their linked counterpart."""
+        txn = self.get_transaction(txn_id)
+        if txn.status is ClearedStatus.RECONCILED:
+            raise LedgerError("reconciled transactions are locked")
+        if txn.transfer_id is not None:
+            return self._update_transfer_leg(
+                txn, when, amount, category_id, splits, payee, memo
+            )
+        updated = txn
+        if when is not _UNSET:
+            updated = replace(updated, date=when)
+        if amount is not _UNSET:
+            updated = replace(updated, amount=money(amount))
+        if category_id is not _UNSET:
+            updated = replace(updated, category_id=category_id)
+        if splits is not _UNSET:
+            lines = tuple(
+                SplitLine(s.category_id, money(s.amount), s.memo) for s in splits
+            )
+            updated = replace(updated, splits=lines)
+        if payee is not _UNSET:
+            payee_id = None if payee is None else self._payee_by_name(payee).id
+            updated = replace(updated, payee_id=payee_id)
+        if memo is not _UNSET:
+            updated = replace(updated, memo=memo)
+        account = self.accounts[updated.account_id]
+        self._validate_categorization(account, updated.category_id, updated.splits)
+        self._validate_split_total(updated.splits, updated.amount)
+        self._transactions[updated.id] = updated
+        return updated
+
+    def _update_transfer_leg(
+        self,
+        txn: Transaction,
+        when: datetime.date | _Unset,
+        amount: Amount | _Unset,
+        category_id: str | None | _Unset,
+        splits: Iterable[SplitLine] | _Unset,
+        payee: str | None | _Unset,
+        memo: str | _Unset,
+    ) -> Transaction:
+        if splits is not _UNSET:
+            raise LedgerError("transfer legs cannot be split")
+        if payee is not _UNSET:
+            raise LedgerError("transfer payees are structural and cannot be edited")
+        other = self._transfer_counterpart(txn)
+        mirrors = when is not _UNSET or amount is not _UNSET
+        if mirrors and other.status is ClearedStatus.RECONCILED:
+            raise LedgerError("the linked transfer leg is reconciled and locked")
+        updated, updated_other = txn, other
+        if amount is not _UNSET:
+            value = money(amount)
+            if value == ZERO or (value > ZERO) != (txn.amount > ZERO):
+                raise LedgerError(
+                    "editing cannot change a transfer's direction; "
+                    "delete and recreate instead"
+                )
+            updated = replace(updated, amount=value)
+            updated_other = replace(updated_other, amount=money(-value))
+        if when is not _UNSET:
+            updated = replace(updated, date=when)
+            updated_other = replace(updated_other, date=when)
+        if category_id is not _UNSET:
+            self._validate_transfer_leg_category(txn, other, category_id)
+            updated = replace(updated, category_id=category_id)
+        if memo is not _UNSET:
+            updated = replace(updated, memo=memo)
+        self._transactions[updated.id] = updated
+        if updated_other is not other:
+            self._transactions[updated_other.id] = updated_other
+        return updated
+
+    def _validate_transfer_leg_category(
+        self, txn: Transaction, other: Transaction, category_id: str | None
+    ) -> None:
+        account = self.accounts[txn.account_id]
+        other_account = self.accounts[other.account_id]
+        if account.on_budget and other_account.on_budget:
+            if category_id is not None:
+                raise LedgerError("transfers between budget accounts take no category")
+            return
+        if not account.on_budget:
+            raise LedgerError("the off-budget leg of a transfer takes no category")
+        if category_id is None:
+            raise LedgerError(
+                "transfers touching an off-budget account require a category"
+            )
+        self._validate_category_ref(category_id, allow_rta=True)
+
+    def _transfer_counterpart(self, txn: Transaction) -> Transaction:
+        for other in self._transactions.values():
+            if other.transfer_id == txn.transfer_id and other.id != txn.id:
+                return other
+        raise LedgerError("transfer leg has no linked counterpart")
 
     # -- assignment writes --------------------------------------------------
 
@@ -930,6 +1041,17 @@ class Plan:
         self._validate_category_ref(category_id, allow_rta=True)
         for line in split_lines:
             self._validate_category_ref(line.category_id, allow_rta=False)
+
+    def _validate_split_total(
+        self, splits: tuple[SplitLine, ...], amount: Decimal
+    ) -> None:
+        if not splits:
+            return
+        total = money(sum((line.amount for line in splits), ZERO))
+        if total != amount:
+            raise SplitMismatchError(
+                f"splits sum to {total}, transaction amount is {amount}"
+            )
 
     def _validate_category_ref(
         self, category_id: str | None, *, allow_rta: bool
