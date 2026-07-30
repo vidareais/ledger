@@ -44,6 +44,8 @@ category activity, carry-forward, Ready to Assign, and Age of Money are all
 step, and persistence round-trips are trivially lossless. Money is `Decimal`
 end to end, and the engine is clockless — every time-dependent operation
 takes an explicit date, which keeps behavior deterministic and testable.
+Diagrams of the module layout, domain model, and money flows live in
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Quickstart
 
