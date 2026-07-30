@@ -6,7 +6,7 @@ from ledger.errors import LedgerError, SplitMismatchError, UnknownEntityError
 from ledger.money import ZERO, Amount, money
 from ledger.month import YMonth
 from ledger.payees import Payee
-from ledger.plan import PAYMENT_GROUP_ID, AutoAssignPreset, Plan
+from ledger.plan import PAYMENT_GROUP_ID, AutoAssignPreset, LoanPayment, Plan
 from ledger.schedules import Frequency, ScheduledTransaction
 from ledger.targets import (
     BudgetView,
@@ -42,6 +42,7 @@ __all__ = [
     "DebtPaymentTarget",
     "Frequency",
     "LedgerError",
+    "LoanPayment",
     "MonthlyTarget",
     "Payee",
     "Plan",

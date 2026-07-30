@@ -2,6 +2,7 @@
 
 import datetime
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import Enum, auto
 
 
@@ -44,6 +45,7 @@ class Account:
     account_type: AccountType
     linked: bool = False
     paired_category_id: str | None = None
+    apr_percent: Decimal | None = None
     last_reconciled: datetime.date | None = None
 
     @property
@@ -52,4 +54,6 @@ class Account:
 
     @property
     def on_budget(self) -> bool:
-        return self.account_class is not AccountClass.TRACKING
+        """Only CASH and CREDIT accounts hold budgeted, categorizable money;
+        LOANS and TRACKING sit outside the partition (sections 2 and 5.4)."""
+        return self.account_class in (AccountClass.CASH, AccountClass.CREDIT)

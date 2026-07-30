@@ -9,7 +9,7 @@ than being applied by an explicit month-close step.
 import datetime
 import itertools
 from collections.abc import Iterable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from enum import Enum, auto
 
@@ -31,6 +31,17 @@ class AutoAssignPreset(Enum):
     SPENT_LAST_MONTH = auto()
     AVERAGE_ASSIGNED = auto()
     AVERAGE_SPENT = auto()
+
+
+@dataclass(frozen=True)
+class LoanPayment:
+    """How a recorded loan payment decomposed (section 5.4)."""
+
+    payment: Decimal
+    principal: Decimal
+    interest: Decimal
+    transfer: tuple[Transaction, Transaction]
+    interest_charge: Transaction | None
 
 
 class Plan:
@@ -57,14 +68,18 @@ class Plan:
         *,
         linked: bool = False,
         paired_category_id: str | None = None,
+        apr_percent: Amount | None = None,
         opening_balance: Amount = 0,
         opening_date: datetime.date | None = None,
     ) -> Account:
         if account_id in self.accounts:
             raise LedgerError(f"duplicate account id {account_id!r}")
         account_class = CLASS_BY_TYPE[account_type]
-        if account_class is AccountClass.LOANS and paired_category_id is None:
-            raise LedgerError("loan accounts must be paired with a category")
+        if account_class is AccountClass.LOANS:
+            if paired_category_id is None:
+                raise LedgerError("loan accounts must be paired with a category")
+            if apr_percent is None:
+                raise LedgerError("loan accounts need an interest rate (apr_percent)")
         if paired_category_id is not None:
             self._require_category(paired_category_id)
         account = Account(
@@ -73,6 +88,7 @@ class Plan:
             account_type,
             linked=linked,
             paired_category_id=paired_category_id,
+            apr_percent=None if apr_percent is None else Decimal(str(apr_percent)),
         )
         self.accounts[account_id] = account
         if account_class is AccountClass.CREDIT:
@@ -252,7 +268,7 @@ class Plan:
             return None, None
         if category_id is None:
             raise LedgerError(
-                "transfers touching a tracking account require a category"
+                "transfers touching an off-budget account require a category"
             )
         self._validate_category_ref(category_id, allow_rta=True)
         out_category = category_id if source.on_budget else None
@@ -432,6 +448,56 @@ class Plan:
                 )
         account.last_reconciled = when
         return adjustment
+
+    # -- loan payments (section 5.4) ----------------------------------------
+
+    def record_loan_payment(
+        self,
+        from_account_id: str,
+        loan_account_id: str,
+        when: datetime.date,
+        amount: Amount,
+    ) -> LoanPayment:
+        """A loan payment is a transfer categorized to the loan's paired
+        category, decomposed against the stored rate: the period's accrued
+        interest is charged to the loan first, so the balance improves by
+        the principal portion only — never 1:1 with the payment."""
+        loan = self._require_account(loan_account_id)
+        if loan.account_class is not AccountClass.LOANS:
+            raise LedgerError("record_loan_payment requires a loan account")
+        if loan.apr_percent is None:
+            raise LedgerError("loan account has no interest rate")
+        payment = money(amount)
+        if payment <= ZERO:
+            raise LedgerError("payment must be positive")
+        balance_owed = -self.account_balance(loan_account_id)
+        interest = max(
+            ZERO, money(balance_owed * loan.apr_percent / Decimal(100) / Decimal(12))
+        )
+        interest_charge: Transaction | None = None
+        if interest > ZERO:
+            interest_charge = Transaction(
+                self._new_id("txn"),
+                loan_account_id,
+                when,
+                -interest,
+                payee_id=self._payee_by_name("Interest", structural=True).id,
+            )
+            self._record(interest_charge)
+        legs = self.add_transfer(
+            from_account_id,
+            loan_account_id,
+            when,
+            payment,
+            category_id=loan.paired_category_id,
+        )
+        return LoanPayment(
+            payment=payment,
+            principal=money(payment - interest),
+            interest=interest,
+            transfer=legs,
+            interest_charge=interest_charge,
+        )
 
     # -- scheduled transactions (section 8.2) -------------------------------
 
@@ -664,7 +730,7 @@ class Plan:
             raise LedgerError("a split transaction cannot also have a category")
         if not account.on_budget:
             if category_id is not None or split_lines:
-                raise LedgerError("tracking-account transactions take no category")
+                raise LedgerError("off-budget account transactions take no category")
             return
         if category_id is None and not split_lines:
             raise LedgerError("budget-account transactions require a category")

@@ -38,7 +38,7 @@ separate storage locations.
 |---|---|---|---|
 | CASH | Checking, Savings | Yes | Normal spending categories |
 | CREDIT | Credit Card, Line of Credit | Yes | Auto-generated payment category (§5.3) |
-| LOANS | Mortgage, Auto Loan | Yes | Paired at creation to an ordinary category (§5.4) |
+| LOANS | Mortgage, Auto Loan | No | Paired at creation to an ordinary category (§5.4) |
 | TRACKING | Investment, Asset, etc. | No | None — cannot be paired, ever |
 
 - Payment-category linkage is triggered by the account being a
@@ -124,9 +124,9 @@ is involved — no money entered or left the budget as a whole.
 
 - Transfer payees are structural foreign-key markers, not user data: they
   cannot be merged or renamed.
-- A transfer touching a tracking account moves money in or out of the
-  budgeted world and therefore behaves as categorized outflow/inflow on the
-  on-budget side.
+- A transfer touching an off-budget account (tracking or loan) moves money
+  in or out of the budgeted world and therefore behaves as categorized
+  outflow/inflow on the on-budget side.
 
 ### 5.3 Credit accounts and the payment-category mechanism
 
@@ -147,8 +147,12 @@ category:
 ### 5.4 Loan accounts
 
 - Pairing to an ordinary budget category is **required at creation** (choose
-  existing or create new). The user assigns money monthly to that paired
-  category.
+  existing or create new), along with the loan's interest rate. The user
+  assigns money monthly to that paired category.
+- Loan accounts sit outside the budget partition for categorization (their
+  transactions carry no category), so a payment is a transfer to an
+  off-budget account whose cash side is categorized to the paired category —
+  recording a payment spends down the money assigned there.
 - **Record Payment** is again a transfer, but internally decomposed into
   principal + interest via the account's stored rate and term
   (amortization, §6.4). Only the principal portion reduces the loan balance —

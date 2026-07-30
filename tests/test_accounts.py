@@ -19,19 +19,28 @@ def test_account_class_mapping_and_on_budget_flag() -> None:
     assert invest.account_class is AccountClass.TRACKING and not invest.on_budget
 
 
-def test_loan_accounts_require_a_paired_category() -> None:
+def test_loan_accounts_require_pairing_and_a_rate() -> None:
     plan = Plan()
     plan.add_category_group("bills", "Bills")
     plan.add_category("mortgage_cat", "Rent/Mortgage", "bills")
     with pytest.raises(LedgerError):
         plan.add_account("mortgage", "Mortgage", AccountType.MORTGAGE)
+    with pytest.raises(LedgerError):
+        plan.add_account(
+            "mortgage",
+            "Mortgage",
+            AccountType.MORTGAGE,
+            paired_category_id="mortgage_cat",
+        )
     loan = plan.add_account(
         "mortgage",
         "Mortgage",
         AccountType.MORTGAGE,
         paired_category_id="mortgage_cat",
+        apr_percent="5",
     )
     assert loan.paired_category_id == "mortgage_cat"
+    assert not loan.on_budget  # loans sit outside the budget partition
 
 
 def test_cash_opening_balance_funds_rta() -> None:
