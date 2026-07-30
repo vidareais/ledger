@@ -174,6 +174,41 @@ class Plan:
             for category_id in self.groups[group_id].category_ids
         ]
 
+    def move_category(
+        self, category_id: str, group_id: str, position: int | None = None
+    ) -> None:
+        """Reposition a category within its group or into another group at
+        `position` (None appends; past-the-end clamps). Order is the only
+        Auto-Assign priority (section 7.1). Payment categories are
+        structural: they may be reordered within the payments group but
+        never leave it, and ordinary categories cannot enter it."""
+        category = self._require_category(category_id)
+        if group_id not in self.groups:
+            raise UnknownEntityError(f"unknown group {group_id!r}")
+        if position is not None and position < 0:
+            raise LedgerError("position must be zero or positive")
+        is_payment = category.payment_account_id is not None
+        if is_payment and group_id != PAYMENT_GROUP_ID:
+            raise LedgerError("payment categories cannot leave the payments group")
+        if not is_payment and group_id == PAYMENT_GROUP_ID:
+            raise LedgerError("only payment categories belong in the payments group")
+        self.groups[category.group_id].category_ids.remove(category_id)
+        destination = self.groups[group_id].category_ids
+        if position is None:
+            destination.append(category_id)
+        else:
+            destination.insert(position, category_id)
+        category.group_id = group_id
+
+    def move_group(self, group_id: str, position: int) -> None:
+        """Reposition a whole group in the display order (section 7.1)."""
+        if group_id not in self.groups:
+            raise UnknownEntityError(f"unknown group {group_id!r}")
+        if position < 0:
+            raise LedgerError("position must be zero or positive")
+        self.group_order.remove(group_id)
+        self.group_order.insert(position, group_id)
+
     def _create_payment_category(self, account: Account) -> None:
         if PAYMENT_GROUP_ID not in self.groups:
             self.add_category_group(PAYMENT_GROUP_ID, "Credit Card Payments")
