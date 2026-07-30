@@ -578,6 +578,39 @@ class Plan:
     def pending_approval(self) -> tuple[Transaction, ...]:
         return tuple(t for t in self._ordered_txns() if not t.approved)
 
+    # -- payees (section 8.4) -----------------------------------------------
+
+    def rename_payee(self, payee_id: str, name: str) -> Payee:
+        payee = self._require_payee(payee_id)
+        if payee.structural:
+            raise LedgerError("structural payees cannot be renamed")
+        payee.name = name
+        return payee
+
+    def merge_payees(self, losing_payee_id: str, surviving_payee_id: str) -> int:
+        """Foreign-key rewrite plus delete, not a blended entity: every
+        transaction and schedule tagged with the losing payee is repointed
+        at the surviving one (reconciled rows included — the merge rewrites
+        metadata, not financial history), then the losing payee record is
+        retired. Returns the number of repointed references."""
+        losing = self._require_payee(losing_payee_id)
+        surviving = self._require_payee(surviving_payee_id)
+        if losing.id == surviving.id:
+            raise LedgerError("cannot merge a payee into itself")
+        if losing.structural or surviving.structural:
+            raise LedgerError("structural payees cannot be merged")
+        repointed = 0
+        for txn in list(self._transactions.values()):
+            if txn.payee_id == losing.id:
+                self._transactions[txn.id] = replace(txn, payee_id=surviving.id)
+                repointed += 1
+        for schedule in self.schedules.values():
+            if schedule.payee_id == losing.id:
+                schedule.payee_id = surviving.id
+                repointed += 1
+        del self.payees[losing.id]
+        return repointed
+
     # -- auto-assign (section 7) --------------------------------------------
 
     def preview_underfunded(
@@ -755,6 +788,12 @@ class Plan:
                 return payee
         payee = Payee(self._new_id("payee"), name, structural)
         self.payees[payee.id] = payee
+        return payee
+
+    def _require_payee(self, payee_id: str) -> Payee:
+        payee = self.payees.get(payee_id)
+        if payee is None:
+            raise UnknownEntityError(f"unknown payee {payee_id!r}")
         return payee
 
     def _require_account(self, account_id: str) -> Account:
