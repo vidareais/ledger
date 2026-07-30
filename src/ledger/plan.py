@@ -8,6 +8,7 @@ than being applied by an explicit month-close step.
 
 import datetime
 import itertools
+from collections import deque
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from decimal import Decimal
@@ -31,6 +32,12 @@ class AutoAssignPreset(Enum):
     SPENT_LAST_MONTH = auto()
     AVERAGE_ASSIGNED = auto()
     AVERAGE_SPENT = auto()
+
+
+@dataclass
+class _Bucket:
+    earned: datetime.date
+    remaining: Decimal
 
 
 @dataclass(frozen=True)
@@ -365,6 +372,63 @@ class Plan:
 
     def transactions(self) -> tuple[Transaction, ...]:
         return tuple(self._ordered_txns())
+
+    # -- age of money (section 9) -------------------------------------------
+
+    def age_of_money(self, sample: int = 10) -> int | None:
+        """Mean age of the last `sample` cash outflows, in whole days;
+        None until at least one cash outflow exists."""
+        ages = self._cash_outflow_ages()
+        if not ages:
+            return None
+        recent = ages[-sample:]
+        return int(sum(recent, Decimal(0)) / len(recent))
+
+    def _cash_outflow_ages(self) -> list[Decimal]:
+        """FIFO dollar-aging over the shared cash pool: inflows queue up as
+        dated buckets, every outflow consumes the oldest dollars first, and
+        cash-to-cash transfers are neutral. Credit spending never appears
+        here — the card payment is the cash outflow that consumes dollars."""
+        cash_ids = {
+            a.id for a in self.accounts.values() if a.account_class is AccountClass.CASH
+        }
+        legs_by_transfer: dict[str, list[str]] = {}
+        for txn in self._transactions.values():
+            if txn.transfer_id is not None:
+                legs_by_transfer.setdefault(txn.transfer_id, []).append(txn.account_id)
+        internal_transfers = {
+            transfer_id
+            for transfer_id, account_ids in legs_by_transfer.items()
+            if all(account_id in cash_ids for account_id in account_ids)
+        }
+        buckets: deque[_Bucket] = deque()
+        ages: list[Decimal] = []
+        for txn in self._ordered_txns():
+            if txn.account_id not in cash_ids or txn.transfer_id in internal_transfers:
+                continue
+            if txn.amount > ZERO:
+                buckets.append(_Bucket(txn.date, txn.amount))
+            elif txn.amount < ZERO:
+                ages.append(self._consume_buckets(buckets, txn.date, -txn.amount))
+        return ages
+
+    @staticmethod
+    def _consume_buckets(
+        buckets: deque[_Bucket], spent: datetime.date, amount: Decimal
+    ) -> Decimal:
+        """Weighted-average age of one outflow across the FIFO buckets it
+        drains; dollars with no funding inflow age zero days."""
+        remaining = amount
+        weighted = Decimal(0)
+        while remaining > ZERO and buckets:
+            bucket = buckets[0]
+            take = min(remaining, bucket.remaining)
+            weighted += take * (spent - bucket.earned).days
+            bucket.remaining -= take
+            remaining -= take
+            if bucket.remaining == ZERO:
+                buckets.popleft()
+        return weighted / amount
 
     # -- transaction status and reconciliation (section 8.3) ----------------
 

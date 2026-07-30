@@ -335,9 +335,17 @@ plus delete, not a blended entity or cosmetic rename. System transfer payees
 - **Custom Views** are the opposite: an explicitly enumerated, persisted,
   static list of category ids — a saved segment whose membership does not
   react to balance changes. Engine: store as a plain id list.
-- **Age of Money**: rolling average of how long currently-spent dollars sat
-  in accounts before being spent. Needs historical depth on both inflow and
-  outflow sides to be meaningful. Exact algorithm unverified (§11).
+- **Age of Money** (modeled on YNAB's published metric): the cash pool
+  (CASH-class accounts) is a FIFO queue of inflow "dollar buckets". Every
+  cash outflow consumes the oldest dollars first; its age is the weighted
+  average, across the buckets it drew from, of the days between earning and
+  spending. Credit spending ages nothing at purchase time — the card
+  *payment* is the cash outflow that consumes dollars. Cash-to-cash
+  transfers are neutral (the pool is shared across cash accounts);
+  transfers leaving the pool (to credit, loan, or tracking accounts) count
+  as spending. Dollars spent without a funding inflow age zero days.
+  Age of Money = the mean age of the last 10 cash outflows, in whole days;
+  undefined until at least one cash outflow exists.
 
 ## 10. Verified test vectors
 
@@ -377,7 +385,6 @@ Not covered by observation; decide or verify before implementing:
   exercised.
 - **Targets on credit-card payment categories**: interaction untested.
 - **Weekly targets across a month boundary**: untested.
-- **Age of Money**: exact windowing/algorithm unknown.
 - Search/filtering beyond the built-in tabs, reports, multi-currency: out of
   scope (§ Scope).
 
