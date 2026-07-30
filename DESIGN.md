@@ -309,8 +309,11 @@ Reconciling compares a user-entered real-world balance against the account's
 current *cleared* balance. On confirmation, every previously-cleared
 transaction is **retroactively locked** and the account stamped with a
 reconciliation timestamp — a trust boundary freezing history, not a cosmetic
-checkmark. On mismatch, the reference app is believed to insert an automatic
-adjustment transaction to force agreement (inferred, not verified — §11).
+checkmark. On mismatch, an automatic already-cleared adjustment transaction
+is inserted to force agreement. Cash-account adjustments are categorized as
+"Inflow: Ready to Assign" — a discovered surplus raises RTA and a shortfall
+docks it, exactly like an opening balance entering the budget. Credit and
+tracking adjustments stay uncategorized and never touch RTA.
 
 ### 8.4 Payees
 
@@ -366,8 +369,6 @@ Not covered by observation; decide or verify before implementing:
 
 - **Credit overspending**: rollover rule for overspending charged on a
   credit account (unbudgeted debt) — the §4.2 experiment covered cash only.
-- **Reconciliation mismatch**: auto-adjustment transaction is inferred, not
-  observed.
 - **Loan payoff simulator** and **account exclusion/deletion** flows: never
   exercised.
 - **Targets on credit-card payment categories**: interaction untested.

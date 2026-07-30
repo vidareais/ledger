@@ -21,7 +21,7 @@ from ledger.targets import (
     required_payment,
     total_interest,
 )
-from ledger.transactions import RTA_INFLOW, SplitLine, Transaction
+from ledger.transactions import RTA_INFLOW, ClearedStatus, SplitLine, Transaction
 
 __all__ = [
     "PAYMENT_GROUP_ID",
@@ -35,6 +35,7 @@ __all__ = [
     "BudgetView",
     "Category",
     "CategoryGroup",
+    "ClearedStatus",
     "CustomSubMode",
     "CustomTarget",
     "DebtPaymentTarget",

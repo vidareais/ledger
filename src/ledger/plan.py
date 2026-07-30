@@ -9,6 +9,7 @@ than being applied by an explicit month-close step.
 import datetime
 import itertools
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from decimal import Decimal
 from enum import Enum, auto
 
@@ -19,7 +20,7 @@ from ledger.money import ZERO, Amount, money
 from ledger.month import YMonth
 from ledger.payees import Payee
 from ledger.targets import Target
-from ledger.transactions import RTA_INFLOW, SplitLine, Transaction
+from ledger.transactions import RTA_INFLOW, ClearedStatus, SplitLine, Transaction
 
 PAYMENT_GROUP_ID = "credit-card-payments"
 
@@ -160,6 +161,7 @@ class Plan:
         category_id: str | None = None,
         splits: Iterable[SplitLine] = (),
         payee: str | None = None,
+        cleared: bool = False,
         memo: str = "",
     ) -> Transaction:
         account = self._require_account(account_id)
@@ -183,6 +185,7 @@ class Plan:
             payee_id=payee_id,
             category_id=category_id,
             splits=split_lines,
+            status=ClearedStatus.CLEARED if cleared else ClearedStatus.UNCLEARED,
             memo=memo,
         )
         self._record(txn)
@@ -344,6 +347,89 @@ class Plan:
 
     def transactions(self) -> tuple[Transaction, ...]:
         return tuple(self._ordered_txns())
+
+    # -- transaction status and reconciliation (section 8.3) ----------------
+
+    def get_transaction(self, txn_id: str) -> Transaction:
+        txn = self._transactions.get(txn_id)
+        if txn is None:
+            raise UnknownEntityError(f"unknown transaction {txn_id!r}")
+        return txn
+
+    def set_cleared(self, txn_id: str, *, cleared: bool) -> Transaction:
+        txn = self.get_transaction(txn_id)
+        if txn.status is ClearedStatus.RECONCILED:
+            raise LedgerError("reconciled transactions are locked")
+        status = ClearedStatus.CLEARED if cleared else ClearedStatus.UNCLEARED
+        updated = replace(txn, status=status)
+        self._transactions[txn_id] = updated
+        return updated
+
+    def delete_transaction(self, txn_id: str) -> None:
+        """Deleting one leg of a transfer deletes both; reconciled
+        transactions are locked and refuse deletion."""
+        txn = self.get_transaction(txn_id)
+        doomed = [txn]
+        if txn.transfer_id is not None:
+            doomed = [
+                t
+                for t in self._transactions.values()
+                if t.transfer_id == txn.transfer_id
+            ]
+        for t in doomed:
+            if t.status is ClearedStatus.RECONCILED:
+                raise LedgerError("reconciled transactions are locked")
+        for t in doomed:
+            del self._transactions[t.id]
+            self._txn_order.remove(t.id)
+
+    def cleared_balance(self, account_id: str) -> Decimal:
+        self._require_account(account_id)
+        return money(
+            sum(
+                (
+                    t.amount
+                    for t in self._ordered_txns()
+                    if t.account_id == account_id
+                    and t.status is not ClearedStatus.UNCLEARED
+                ),
+                ZERO,
+            )
+        )
+
+    def reconcile(
+        self, account_id: str, when: datetime.date, actual_balance: Amount
+    ) -> Transaction | None:
+        """Trust boundary: compare the entered real-world balance against the
+        cleared balance, insert a cleared adjustment for any difference
+        (returned, else None), then lock every cleared transaction on the
+        account. Cash-account adjustments enter through Ready to Assign,
+        mirroring opening balances; credit and tracking adjustments are
+        uncategorized (section 8.3)."""
+        account = self._require_account(account_id)
+        difference = money(actual_balance) - self.cleared_balance(account_id)
+        adjustment: Transaction | None = None
+        if difference != ZERO:
+            is_cash = account.account_class is AccountClass.CASH
+            adjustment = Transaction(
+                self._new_id("txn"),
+                account_id,
+                when,
+                difference,
+                payee_id=self._payee_by_name(
+                    "Reconciliation Balance Adjustment", structural=True
+                ).id,
+                category_id=RTA_INFLOW if is_cash else None,
+                status=ClearedStatus.CLEARED,
+            )
+            self._record(adjustment)
+        for txn in list(self._transactions.values()):
+            if txn.account_id == account_id and txn.status is ClearedStatus.CLEARED:
+                self._transactions[txn.id] = replace(
+                    txn, status=ClearedStatus.RECONCILED
+                )
+        account.last_reconciled = when
+        return adjustment
 
     # -- auto-assign (section 7) --------------------------------------------
 

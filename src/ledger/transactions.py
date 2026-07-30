@@ -3,9 +3,16 @@
 import datetime
 from dataclasses import dataclass
 from decimal import Decimal
+from enum import Enum, auto
 
 RTA_INFLOW = "inflow:ready-to-assign"
 """Sentinel category id for inflows that fund Ready to Assign (section 3)."""
+
+
+class ClearedStatus(Enum):
+    UNCLEARED = auto()
+    CLEARED = auto()
+    RECONCILED = auto()
 
 
 @dataclass(frozen=True)
@@ -25,6 +32,7 @@ class Transaction:
     category_id: str | None = None
     splits: tuple[SplitLine, ...] = ()
     transfer_id: str | None = None
+    status: ClearedStatus = ClearedStatus.UNCLEARED
     memo: str = ""
 
     def lines(self) -> tuple[tuple[str, Decimal], ...]:

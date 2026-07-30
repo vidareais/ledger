@@ -1,5 +1,6 @@
 """Account taxonomy (DESIGN.md section 2)."""
 
+import datetime
 from dataclasses import dataclass
 from enum import Enum, auto
 
@@ -43,6 +44,7 @@ class Account:
     account_type: AccountType
     linked: bool = False
     paired_category_id: str | None = None
+    last_reconciled: datetime.date | None = None
 
     @property
     def account_class(self) -> AccountClass:
