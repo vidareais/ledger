@@ -103,7 +103,7 @@ removed the August penalty entirely.
 > forward in-category. The controlled experiment above disproved that for
 > cash overspending; implement reset-to-zero + RTA dock. Overspending *on a
 > credit account* (which creates unbudgeted debt) was not stress-tested —
-> flagged in §12.
+> flagged in §11.
 
 ## 5. Money movement operations
 
@@ -215,7 +215,7 @@ Special cases: `M ≤ r·P` never amortizes (no solution); `r = 0` degenerates
 to `n = P / M`. Payment below the contractual Minimum Payment is legal but
 should be flaggable (reference app warns about potential lender fees).
 
-Verified vectors (also see §11):
+Verified vectors (also see §10):
 
 | Principal | APR | Payment | Months to payoff | Total interest |
 |---|---|---|---|---|
@@ -310,7 +310,7 @@ current *cleared* balance. On confirmation, every previously-cleared
 transaction is **retroactively locked** and the account stamped with a
 reconciliation timestamp — a trust boundary freezing history, not a cosmetic
 checkmark. On mismatch, the reference app is believed to insert an automatic
-adjustment transaction to force agreement (inferred, not verified — §12).
+adjustment transaction to force agreement (inferred, not verified — §11).
 
 ### 8.4 Payees
 
@@ -330,16 +330,9 @@ plus delete, not a blended entity or cosmetic rename. System transfer payees
   react to balance changes. Engine: store as a plain id list.
 - **Age of Money**: rolling average of how long currently-spent dollars sat
   in accounts before being spent. Needs historical depth on both inflow and
-  outflow sides to be meaningful. Exact algorithm unverified (§12).
+  outflow sides to be meaningful. Exact algorithm unverified (§11).
 
-## 10. Undo / Redo
-
-Undo/Redo is a genuine linear action-history stack (verified in-app, distinct
-from browser undo): every mutating operation pushes an entry; undo restores
-the pre-operation state and enables redo. Snapshot-based restoration is an
-acceptable implementation; each entry should carry a human-readable label.
-
-## 11. Verified test vectors
+## 10. Verified test vectors
 
 Recorded from the reference app; each should become a test.
 
@@ -367,7 +360,7 @@ Recorded from the reference app; each should become a test.
 9. **Split invariant**: allocations summing ≠ $52.50 on a $52.50
    transaction → write rejected.
 
-## 12. Open questions / unverified behavior
+## 11. Open questions / unverified behavior
 
 Not covered by observation; decide or verify before implementing:
 
@@ -388,4 +381,4 @@ Not covered by observation; decide or verify before implementing:
 `sample.py` is a throwaway single-file prototype of most rules above,
 written before this spec was consolidated. Treat this document, not the
 prototype, as the source of truth — the real implementation lives in
-`src/ledger/` with tests derived from §11.
+`src/ledger/` with tests derived from §10.

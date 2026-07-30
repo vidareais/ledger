@@ -31,7 +31,6 @@ that were verified empirically:
           chosen weekday between today and month-end).
         - Debt Payment Target: standard loan amortization, so changing
           the monthly payment recomputes the payoff term.
-  * Undo/Redo as a genuine action-history stack (snapshot-based).
 
 Run this file directly to see a demo walkthrough exercising every
 mechanic (`python ynab_engine.py`).
@@ -46,7 +45,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from enum import Enum, auto
-from typing import Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -337,27 +336,6 @@ class CategoryGroup:
 
 
 # ---------------------------------------------------------------------------
-# Undo/Redo support (generic snapshot-based action-history stack)
-# ---------------------------------------------------------------------------
-
-def tracked(label_fmt: str):
-    """Decorator: snapshots Budget state before a mutating call, pushes it
-    (with a human-readable label) onto the undo stack, and clears the
-    redo stack -- confirming Undo/Redo behaves as a genuine, linear
-    action-history stack rather than per-field inverse operations."""
-    def decorator(fn: Callable):
-        def wrapper(self: "Budget", *args, **kwargs):
-            snapshot = self._snapshot()
-            label = label_fmt.format(*args, **kwargs)
-            result = fn(self, *args, **kwargs)
-            self._undo_stack.append((label, snapshot))
-            self._redo_stack.clear()
-            return result
-        return wrapper
-    return decorator
-
-
-# ---------------------------------------------------------------------------
 # The Budget engine
 # ---------------------------------------------------------------------------
 
@@ -368,34 +346,6 @@ class Budget:
         self.categories: Dict[str, Category] = {}
         self.category_order: List[str] = []  # top-to-bottom order, used by Underfunded walk
         self.rta: Dict[YMonth, Decimal] = {}  # Ready to Assign, per month
-        self._undo_stack: List[tuple] = []
-        self._redo_stack: List[tuple] = []
-
-    # -- snapshot machinery -------------------------------------------------
-
-    def _snapshot(self):
-        return copy.deepcopy((self.accounts, self.groups, self.categories,
-                               self.category_order, self.rta))
-
-    def _restore(self, snapshot):
-        (self.accounts, self.groups, self.categories,
-         self.category_order, self.rta) = copy.deepcopy(snapshot)
-
-    def undo(self) -> Optional[str]:
-        if not self._undo_stack:
-            return None
-        label, snapshot = self._undo_stack.pop()
-        self._redo_stack.append((label, self._snapshot()))
-        self._restore(snapshot)
-        return label
-
-    def redo(self) -> Optional[str]:
-        if not self._redo_stack:
-            return None
-        label, snapshot = self._redo_stack.pop()
-        self._undo_stack.append((label, self._snapshot()))
-        self._restore(snapshot)
-        return label
 
     # -- setup ---------------------------------------------------------------
 
@@ -440,7 +390,6 @@ class Budget:
 
     # -- money movement -------------------------------------------------
 
-    @tracked("record_income({2})")
     def record_income(self, account_id: str, month: YMonth, amount: Decimal) -> None:
         """Inflow to an on-budget account that isn't already assigned
         anywhere increases Ready to Assign directly. Income landing in an
@@ -451,7 +400,6 @@ class Budget:
             self._add_rta(month, money(amount))
         # Tracking accounts: balance changes, budget is untouched.
 
-    @tracked("assign({1}, {2})")
     def assign(self, category_id: str, month: YMonth, amount: Decimal) -> None:
         """Directly SET a category's assigned amount for a month (used by
         manual assignment and by the four historical Auto-Assign presets).
@@ -461,7 +409,6 @@ class Budget:
         cat.set_assigned(month, amount)
         self._add_rta(month, -delta)
 
-    @tracked("move_money({1}->{2}, {4})")
     def move_money(self, from_category_id: str, to_category_id: str,
                    month: YMonth, amount: Decimal) -> None:
         """Move already-assigned money between two categories. Net RTA
@@ -473,7 +420,6 @@ class Budget:
         from_cat.add_assigned(month, -amount)
         to_cat.add_assigned(month, amount)
 
-    @tracked("transfer({1}->{2}, {3})")
     def transfer(self, from_account_id: str, to_account_id: str, amount: Decimal,
                  category_id: Optional[str] = None, month: Optional[YMonth] = None) -> None:
         """Move money between two accounts.
@@ -503,7 +449,6 @@ class Budget:
             # Money entering the budgeted world: treat like income to RTA.
             self._add_rta(month, amount)
 
-    @tracked("pay_credit_card({1}->{2}, {3})")
     def pay_credit_card(self, from_account_id: str, cc_account_id: str,
                          amount: Decimal, month: YMonth) -> None:
         """Paying a credit card bill is a budget<->budget transfer (no
@@ -518,7 +463,6 @@ class Budget:
         pay_cat = self.categories[f"ccpay_{cc_account_id}"]
         pay_cat.add_assigned(month, -amount)
 
-    @tracked("spend({1}, {3}, {4})")
     def add_transaction(self, account_id: str, category_id: Optional[str],
                          month: YMonth, amount: Decimal, payee: str = "") -> None:
         """Record a transaction. `amount` is negative for an outflow,
@@ -550,7 +494,6 @@ class Budget:
 
     # -- Auto-Assign: two distinct algorithm families ------------------------
 
-    @tracked("auto_assign_underfunded({1})")
     def auto_assign_underfunded(self, month: YMonth, today: date) -> Dict[str, Decimal]:
         """Greedy, top-to-bottom, partial-funding walk. Only ADDS money to
         underfunded categories, capped by whatever RTA remains -- it never
@@ -574,7 +517,6 @@ class Budget:
                 funded[cat_id] = funding
         return funded
 
-    @tracked("auto_assign_preset({1}, from {2})")
     def auto_assign_preset(self, preset: AutoAssignPreset, source_month: YMonth,
                             target_month: YMonth,
                             history_months: Optional[List[YMonth]] = None) -> Dict[str, Decimal]:
@@ -609,7 +551,6 @@ class Budget:
 
     # -- Month rollover / overspending -------------------------------------
 
-    @tracked("rollover_month({1})")
     def rollover_month(self, month: YMonth) -> YMonth:
         """Advance to the next month. Rule confirmed empirically:
         - A category's available balance NEVER carries a negative value
@@ -711,13 +652,13 @@ def _demo():
     b.add_transaction("checking", "transportation", jul, money(-350), payee="Gas Station")
     print(f"\nTransportation overspent: available={b.categories['transportation'].available(jul)}")
 
-    next_month = b.rollover_month(jul)
-    print(f"Uncovered overspend rolled into {next_month}: RTA={b.get_rta(next_month)} "
-          "(docked by the overspent amount)")
+    uncovered = copy.deepcopy(b)
+    next_month = uncovered.rollover_month(jul)
+    print(f"Uncovered overspend rolled into {next_month}: "
+          f"RTA={uncovered.get_rta(next_month)} (docked by the overspent amount)")
 
-    # Undo the rollover, cover the overspend with a real money-move instead,
-    # then roll over again to show the penalty disappears.
-    b.undo()
+    # On the original budget, cover the overspend with a real money-move
+    # instead, then roll over to show the penalty disappears.
     b.move_money("phone", "transportation", jul, money(50))
     print(f"\nCovered overspend via money-move: Transportation available="
           f"{b.categories['transportation'].available(jul)}")
@@ -741,16 +682,6 @@ def _demo():
     for payment in (money(400), money(500), money(600)):
         months = DebtPaymentTarget.payoff_months(balance, apr, payment)
         print(f"  Payment ${payment}/mo on ${balance} @ {apr}% APR -> payoff in {months} months")
-
-    # -- Undo/Redo as a genuine action-history stack -------------------------
-    print("\n=== Undo/Redo stack ===")
-    before = b.categories["vacation"].get_assigned(jul)
-    b.assign("vacation", jul, before + money(100))
-    print(f"Vacation assigned after +$100: {b.categories['vacation'].get_assigned(jul)}")
-    label = b.undo()
-    print(f"Undid '{label}': Vacation assigned back to {b.categories['vacation'].get_assigned(jul)}")
-    label = b.redo()
-    print(f"Redid '{label}': Vacation assigned is {b.categories['vacation'].get_assigned(jul)}")
 
 
 if __name__ == "__main__":

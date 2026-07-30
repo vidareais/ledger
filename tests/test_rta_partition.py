@@ -1,4 +1,4 @@
-"""DESIGN.md section 11, vector 1: the tracking-account hard partition."""
+"""DESIGN.md section 10, vector 1: the tracking-account hard partition."""
 
 from datetime import date
 

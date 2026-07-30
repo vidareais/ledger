@@ -1,4 +1,4 @@
-"""DESIGN.md sections 5.3 and 11 vector 2: credit-card payment mechanics."""
+"""DESIGN.md sections 5.3 and 10 vector 2: credit-card payment mechanics."""
 
 from datetime import date
 

@@ -1,4 +1,4 @@
-"""DESIGN.md sections 6 and 11 vectors 5-6: target funding formulas."""
+"""DESIGN.md sections 6 and 10 vectors 5-6: target funding formulas."""
 
 from datetime import date
 

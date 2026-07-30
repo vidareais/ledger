@@ -1,4 +1,4 @@
-"""DESIGN.md sections 4.2 and 11 vector 4: overspending rollover.
+"""DESIGN.md sections 4.2 and 10 vector 4: overspending rollover.
 
 No explicit month-close call exists: August's numbers are pure derivations.
 """

@@ -1,4 +1,4 @@
-"""DESIGN.md sections 8.1 and 11 vector 9: split-transaction invariant."""
+"""DESIGN.md sections 8.1 and 10 vector 9: split-transaction invariant."""
 
 from datetime import date
 

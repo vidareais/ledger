@@ -1,4 +1,4 @@
-"""DESIGN.md sections 7 and 11 vectors 3 and 8: the two Auto-Assign families."""
+"""DESIGN.md sections 7 and 10 vectors 3 and 8: the two Auto-Assign families."""
 
 from datetime import date
 from decimal import Decimal

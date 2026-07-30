@@ -1,4 +1,4 @@
-"""DESIGN.md sections 6.4 and 11 vector 7: debt-payment amortization math.
+"""DESIGN.md sections 6.4 and 10 vector 7: debt-payment amortization math.
 
 Expected figures come from the reference app's display and are rounded
 there, hence the small tolerances.
