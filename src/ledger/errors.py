@@ -11,3 +11,7 @@ class SplitMismatchError(LedgerError):
 
 class UnknownEntityError(LedgerError):
     """An operation referenced an id that does not exist in the plan."""
+
+
+class PersistenceError(LedgerError):
+    """A plan document could not be loaded or stored."""

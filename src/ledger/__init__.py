@@ -2,12 +2,18 @@
 
 from ledger.accounts import Account, AccountClass, AccountType
 from ledger.categories import Category, CategoryGroup
-from ledger.errors import LedgerError, SplitMismatchError, UnknownEntityError
+from ledger.errors import (
+    LedgerError,
+    PersistenceError,
+    SplitMismatchError,
+    UnknownEntityError,
+)
 from ledger.money import ZERO, Amount, money
 from ledger.month import YMonth
 from ledger.payees import Payee
 from ledger.plan import PAYMENT_GROUP_ID, AutoAssignPreset, LoanPayment, Plan
 from ledger.schedules import Frequency, ScheduledTransaction
+from ledger.storage import JsonPlanStore, PlanStore
 from ledger.targets import (
     BudgetView,
     CustomSubMode,
@@ -41,11 +47,14 @@ __all__ = [
     "CustomTarget",
     "DebtPaymentTarget",
     "Frequency",
+    "JsonPlanStore",
     "LedgerError",
     "LoanPayment",
     "MonthlyTarget",
     "Payee",
+    "PersistenceError",
     "Plan",
+    "PlanStore",
     "ScheduledTransaction",
     "SplitLine",
     "SplitMismatchError",

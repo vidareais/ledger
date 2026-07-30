@@ -7,20 +7,43 @@ than being applied by an explicit month-close step.
 """
 
 import datetime
-import itertools
 from collections import deque
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from enum import Enum, auto
+from typing import Any
 
 from ledger.accounts import CLASS_BY_TYPE, Account, AccountClass, AccountType
 from ledger.categories import Category, CategoryGroup
-from ledger.errors import LedgerError, SplitMismatchError, UnknownEntityError
+from ledger.errors import (
+    LedgerError,
+    PersistenceError,
+    SplitMismatchError,
+    UnknownEntityError,
+)
 from ledger.money import ZERO, Amount, money
 from ledger.month import YMonth
 from ledger.payees import Payee
 from ledger.schedules import Frequency, ScheduledTransaction, next_occurrence
+from ledger.serialization import (
+    FORMAT,
+    VERSION,
+    account_from_dict,
+    account_to_dict,
+    category_from_dict,
+    category_to_dict,
+    group_from_dict,
+    group_to_dict,
+    month_key,
+    parse_month,
+    payee_from_dict,
+    payee_to_dict,
+    schedule_from_dict,
+    schedule_to_dict,
+    transaction_from_dict,
+    transaction_to_dict,
+)
 from ledger.targets import Target
 from ledger.transactions import RTA_INFLOW, ClearedStatus, SplitLine, Transaction
 
@@ -63,7 +86,7 @@ class Plan:
         self._txn_order: list[str] = []
         self._assigned: dict[tuple[str, YMonth], Decimal] = {}
         self._snoozed: set[tuple[str, YMonth]] = set()
-        self._id_counter = itertools.count(1)
+        self._id_seq = 0
 
     # -- entity setup -------------------------------------------------------
 
@@ -788,6 +811,79 @@ class Plan:
                 running += line_amount
         return funded
 
+    # -- persistence --------------------------------------------------------
+
+    def to_dict(self) -> dict[str, Any]:
+        """Versioned document of the stored facts only; every derived figure
+        is recomputed on load."""
+        return {
+            "format": FORMAT,
+            "version": VERSION,
+            "id_seq": self._id_seq,
+            "accounts": [account_to_dict(a) for a in self.accounts.values()],
+            "groups": [group_to_dict(self.groups[gid]) for gid in self.group_order],
+            "categories": [category_to_dict(c) for c in self.categories.values()],
+            "payees": [payee_to_dict(p) for p in self.payees.values()],
+            "schedules": [schedule_to_dict(s) for s in self.schedules.values()],
+            "transactions": [
+                transaction_to_dict(self._transactions[txn_id])
+                for txn_id in self._txn_order
+            ],
+            "assigned": [
+                {"category_id": cid, "month": month_key(m), "amount": str(value)}
+                for (cid, m), value in self._assigned.items()
+            ],
+            "snoozed": [
+                {"category_id": cid, "month": month_key(m)}
+                for cid, m in sorted(self._snoozed)
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Plan:
+        """Rebuild a plan from to_dict() output."""
+        if data.get("format") != FORMAT:
+            raise PersistenceError("not a ledger plan document")
+        if data.get("version") != VERSION:
+            raise PersistenceError(
+                f"unsupported plan document version {data.get('version')!r}"
+            )
+        try:
+            return cls._from_state(data)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise PersistenceError(f"malformed plan document: {exc}") from exc
+
+    @classmethod
+    def _from_state(cls, data: Mapping[str, Any]) -> Plan:
+        plan = cls()
+        plan._id_seq = int(data["id_seq"])
+        for item in data["groups"]:
+            group = group_from_dict(item)
+            plan.groups[group.id] = group
+            plan.group_order.append(group.id)
+        for item in data["categories"]:
+            category = category_from_dict(item)
+            plan.categories[category.id] = category
+        for item in data["accounts"]:
+            account = account_from_dict(item)
+            plan.accounts[account.id] = account
+        for item in data["payees"]:
+            payee = payee_from_dict(item)
+            plan.payees[payee.id] = payee
+        for item in data["schedules"]:
+            schedule = schedule_from_dict(item)
+            plan.schedules[schedule.id] = schedule
+        for item in data["transactions"]:
+            txn = transaction_from_dict(item)
+            plan._transactions[txn.id] = txn
+            plan._txn_order.append(txn.id)
+        for item in data["assigned"]:
+            key = (item["category_id"], parse_month(item["month"]))
+            plan._assigned[key] = Decimal(item["amount"])
+        for item in data["snoozed"]:
+            plan._snoozed.add((item["category_id"], parse_month(item["month"])))
+        return plan
+
     # -- internals ----------------------------------------------------------
 
     def _overspend_docked(self, month: YMonth) -> Decimal:
@@ -877,4 +973,5 @@ class Plan:
         self._txn_order.append(txn.id)
 
     def _new_id(self, prefix: str) -> str:
-        return f"{prefix}-{next(self._id_counter)}"
+        self._id_seq += 1
+        return f"{prefix}-{self._id_seq}"
