@@ -12,6 +12,7 @@ from ledger import (
     CustomSubMode,
     CustomTarget,
     DebtPaymentTarget,
+    FlagColor,
     Frequency,
     JsonPlanStore,
     MonthlyTarget,
@@ -49,6 +50,7 @@ def _rich_plan() -> Plan:
         "checking",
         "Checking",
         AccountType.CHECKING,
+        note="Main account",
         opening_balance=250,
         opening_date=date(2026, 6, 28),
     )
@@ -90,7 +92,12 @@ def _rich_plan() -> Plan:
         payee="Target",
     )
     plan.add_transaction(
-        "card", date(2026, 7, 5), -25, category_id="dining", payee="Cafe"
+        "card",
+        date(2026, 7, 5),
+        -25,
+        category_id="dining",
+        payee="Cafe",
+        flag_color=FlagColor.GREEN,
     )
     plan.add_transfer("checking", "savings", date(2026, 7, 6), 150)
     plan.add_transfer("checking", "card", date(2026, 7, 8), 25)
@@ -108,6 +115,8 @@ def _rich_plan() -> Plan:
     plan.reconcile(
         "checking", date(2026, 7, 21), plan.cleared_balance("checking") - money(10)
     )
+    plan.set_category_hidden("fun", True)
+    plan.close_account("savings")
     return plan
 
 

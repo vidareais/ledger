@@ -6,6 +6,7 @@ from decimal import Decimal
 from enum import Enum, auto
 
 from ledger.month import YMonth
+from ledger.transactions import FlagColor
 
 
 class Frequency(Enum):
@@ -25,6 +26,7 @@ class ScheduledTransaction:
     anchor_day: int  # day-of-month of the first occurrence; prevents drift
     payee_id: str | None = None
     category_id: str | None = None
+    flag_color: FlagColor | None = None
     memo: str = ""
 
 

@@ -28,6 +28,7 @@ from ledger.payees import Payee
 from ledger.schedules import Frequency, ScheduledTransaction, next_occurrence
 from ledger.serialization import (
     FORMAT,
+    SUPPORTED_VERSIONS,
     VERSION,
     account_from_dict,
     account_to_dict,
@@ -45,7 +46,13 @@ from ledger.serialization import (
     transaction_to_dict,
 )
 from ledger.targets import Target
-from ledger.transactions import RTA_INFLOW, ClearedStatus, SplitLine, Transaction
+from ledger.transactions import (
+    RTA_INFLOW,
+    ClearedStatus,
+    FlagColor,
+    SplitLine,
+    Transaction,
+)
 
 PAYMENT_GROUP_ID = "credit-card-payments"
 
@@ -106,6 +113,7 @@ class Plan:
         linked: bool = False,
         paired_category_id: str | None = None,
         apr_percent: Amount | None = None,
+        note: str = "",
         opening_balance: Amount = 0,
         opening_date: datetime.date | None = None,
     ) -> Account:
@@ -126,12 +134,26 @@ class Plan:
             linked=linked,
             paired_category_id=paired_category_id,
             apr_percent=None if apr_percent is None else Decimal(str(apr_percent)),
+            note=note,
         )
         self.accounts[account_id] = account
+        self._transfer_payee(account)
         if account_class is AccountClass.CREDIT:
             self._create_payment_category(account)
         self._record_opening_balance(account, money(opening_balance), opening_date)
         return account
+
+    def close_account(self, account_id: str) -> None:
+        """Closing keeps history queryable but refuses new activity; the
+        account's schedules are removed (api.yaml: Account.closed)."""
+        account = self._require_account(account_id)
+        account.closed = True
+        doomed = [s.id for s in self.schedules.values() if s.account_id == account_id]
+        for schedule_id in doomed:
+            del self.schedules[schedule_id]
+
+    def reopen_account(self, account_id: str) -> None:
+        self._require_account(account_id).closed = False
 
     def add_category_group(self, group_id: str, name: str) -> CategoryGroup:
         if group_id in self.groups:
@@ -147,6 +169,8 @@ class Plan:
         group = self.groups.get(group_id)
         if group is None:
             raise UnknownEntityError(f"unknown group {group_id!r}")
+        if group.internal:
+            raise LedgerError("categories cannot be added to an internal group")
         category = Category(category_id, name, group_id)
         self.categories[category_id] = category
         group.category_ids.append(category_id)
@@ -161,6 +185,21 @@ class Plan:
 
     def unsnooze(self, category_id: str, month: YMonth) -> None:
         self._snoozed.discard((category_id, month))
+
+    def set_category_hidden(self, category_id: str, hidden: bool) -> None:
+        """Hidden categories keep their balances and rollover but are skipped
+        by both Auto-Assign families (api.yaml: Category.hidden)."""
+        self._require_category(category_id).hidden = hidden
+
+    def set_group_hidden(self, group_id: str, hidden: bool) -> None:
+        group = self.groups.get(group_id)
+        if group is None:
+            raise UnknownEntityError(f"unknown group {group_id!r}")
+        group.hidden = hidden
+
+    def _is_hidden(self, category_id: str) -> bool:
+        category = self.categories[category_id]
+        return category.hidden or self.groups[category.group_id].hidden
 
     def display_order(self) -> list[str]:
         """Category ids in display order: group position, then position in group.
@@ -188,9 +227,9 @@ class Plan:
         if position is not None and position < 0:
             raise LedgerError("position must be zero or positive")
         is_payment = category.payment_account_id is not None
-        if is_payment and group_id != PAYMENT_GROUP_ID:
+        if is_payment and not self.groups[group_id].internal:
             raise LedgerError("payment categories cannot leave the payments group")
-        if not is_payment and group_id == PAYMENT_GROUP_ID:
+        if not is_payment and self.groups[group_id].internal:
             raise LedgerError("only payment categories belong in the payments group")
         self.groups[category.group_id].category_ids.remove(category_id)
         destination = self.groups[group_id].category_ids
@@ -212,6 +251,7 @@ class Plan:
     def _create_payment_category(self, account: Account) -> None:
         if PAYMENT_GROUP_ID not in self.groups:
             self.add_category_group(PAYMENT_GROUP_ID, "Credit Card Payments")
+            self.groups[PAYMENT_GROUP_ID].internal = True
         category = Category(
             f"payment:{account.id}",
             f"{account.name} Payment",
@@ -252,9 +292,10 @@ class Plan:
         splits: Iterable[SplitLine] = (),
         payee: str | None = None,
         cleared: bool = False,
+        flag_color: FlagColor | None = None,
         memo: str = "",
     ) -> Transaction:
-        account = self._require_account(account_id)
+        account = self._require_open_account(account_id)
         value = money(amount)
         split_lines = tuple(
             SplitLine(s.category_id, money(s.amount), s.memo) for s in splits
@@ -271,6 +312,7 @@ class Plan:
             category_id=category_id,
             splits=split_lines,
             status=ClearedStatus.CLEARED if cleared else ClearedStatus.UNCLEARED,
+            flag_color=flag_color,
             memo=memo,
         )
         self._record(txn)
@@ -287,8 +329,8 @@ class Plan:
         memo: str = "",
     ) -> tuple[Transaction, Transaction]:
         """Linked pair of transactions with structural payees (section 5.2)."""
-        source = self._require_account(from_account_id)
-        destination = self._require_account(to_account_id)
+        source = self._require_open_account(from_account_id)
+        destination = self._require_open_account(to_account_id)
         if source.id == destination.id:
             raise LedgerError("cannot transfer an account to itself")
         value = money(amount)
@@ -303,9 +345,7 @@ class Plan:
             source.id,
             when,
             -value,
-            payee_id=self._payee_by_name(
-                f"Transfer: {destination.name}", structural=True
-            ).id,
+            payee_id=self._transfer_payee(destination).id,
             category_id=out_category,
             transfer_id=transfer_id,
             memo=memo,
@@ -315,9 +355,7 @@ class Plan:
             destination.id,
             when,
             value,
-            payee_id=self._payee_by_name(
-                f"Transfer: {source.name}", structural=True
-            ).id,
+            payee_id=self._transfer_payee(source).id,
             category_id=in_category,
             transfer_id=transfer_id,
             memo=memo,
@@ -351,6 +389,7 @@ class Plan:
         category_id: str | None | _Unset = _UNSET,
         splits: Iterable[SplitLine] | _Unset = _UNSET,
         payee: str | None | _Unset = _UNSET,
+        flag_color: FlagColor | None | _Unset = _UNSET,
         memo: str | _Unset = _UNSET,
     ) -> Transaction:
         """Edit a transaction in place, re-running the same write-time
@@ -362,7 +401,7 @@ class Plan:
             raise LedgerError("reconciled transactions are locked")
         if txn.transfer_id is not None:
             return self._update_transfer_leg(
-                txn, when, amount, category_id, splits, payee, memo
+                txn, when, amount, category_id, splits, payee, flag_color, memo
             )
         updated = txn
         if when is not _UNSET:
@@ -379,6 +418,8 @@ class Plan:
         if payee is not _UNSET:
             payee_id = None if payee is None else self._payee_by_name(payee).id
             updated = replace(updated, payee_id=payee_id)
+        if flag_color is not _UNSET:
+            updated = replace(updated, flag_color=flag_color)
         if memo is not _UNSET:
             updated = replace(updated, memo=memo)
         account = self.accounts[updated.account_id]
@@ -395,6 +436,7 @@ class Plan:
         category_id: str | None | _Unset,
         splits: Iterable[SplitLine] | _Unset,
         payee: str | None | _Unset,
+        flag_color: FlagColor | None | _Unset,
         memo: str | _Unset,
     ) -> Transaction:
         if splits is not _UNSET:
@@ -421,6 +463,8 @@ class Plan:
         if category_id is not _UNSET:
             self._validate_transfer_leg_category(txn, other, category_id)
             updated = replace(updated, category_id=category_id)
+        if flag_color is not _UNSET:
+            updated = replace(updated, flag_color=flag_color)
         if memo is not _UNSET:
             updated = replace(updated, memo=memo)
         self._transactions[updated.id] = updated
@@ -695,7 +739,7 @@ class Plan:
         category, decomposed against the stored rate: the period's accrued
         interest is charged to the loan first, so the balance improves by
         the principal portion only — never 1:1 with the payment."""
-        loan = self._require_account(loan_account_id)
+        loan = self._require_open_account(loan_account_id)
         if loan.account_class is not AccountClass.LOANS:
             raise LedgerError("record_loan_payment requires a loan account")
         if loan.apr_percent is None:
@@ -743,6 +787,7 @@ class Plan:
         *,
         category_id: str | None = None,
         payee: str | None = None,
+        flag_color: FlagColor | None = None,
         memo: str = "",
         today: datetime.date | None = None,
     ) -> tuple[ScheduledTransaction, list[Transaction]]:
@@ -750,7 +795,7 @@ class Plan:
         observed creation behavior: any occurrence already due (the current
         due date included) materializes immediately as a real, unapproved
         transaction, and the schedule advances to the next future one."""
-        account = self._require_account(account_id)
+        account = self._require_open_account(account_id)
         self._validate_categorization(account, category_id, ())
         payee_id = self._payee_by_name(payee).id if payee is not None else None
         schedule = ScheduledTransaction(
@@ -762,6 +807,7 @@ class Plan:
             first_date.day,
             payee_id=payee_id,
             category_id=category_id,
+            flag_color=flag_color,
             memo=memo,
         )
         self.schedules[schedule.id] = schedule
@@ -794,6 +840,7 @@ class Plan:
                 payee_id=schedule.payee_id,
                 category_id=schedule.category_id,
                 approved=False,
+                flag_color=schedule.flag_color,
                 memo=schedule.memo,
             )
             self._record(txn)
@@ -860,6 +907,8 @@ class Plan:
             category = self.categories[category_id]
             if category.target is None or (category_id, month) in self._snoozed:
                 continue
+            if self._is_hidden(category_id):
+                continue
             needed = category.target.amount_needed(self, category_id, month, today)
             if needed <= ZERO:
                 continue
@@ -880,6 +929,7 @@ class Plan:
         return {
             category_id: self._preset_value(preset, category_id, month, months)
             for category_id in self.display_order()
+            if not self._is_hidden(category_id)
         }
 
     def _preset_value(
@@ -990,7 +1040,7 @@ class Plan:
         """Rebuild a plan from to_dict() output."""
         if data.get("format") != FORMAT:
             raise PersistenceError("not a ledger plan document")
-        if data.get("version") != VERSION:
+        if data.get("version") not in SUPPORTED_VERSIONS:
             raise PersistenceError(
                 f"unsupported plan document version {data.get('version')!r}"
             )
@@ -1028,6 +1078,9 @@ class Plan:
             plan._assigned[key] = Decimal(item["amount"])
         for item in data["snoozed"]:
             plan._snoozed.add((item["category_id"], parse_month(item["month"])))
+        for category in plan.categories.values():
+            if category.payment_account_id is not None:
+                plan.groups[category.group_id].internal = True
         return plan
 
     # -- internals ----------------------------------------------------------
@@ -1097,7 +1150,11 @@ class Plan:
             if not allow_rta:
                 raise LedgerError("Ready to Assign cannot be used in a split")
             return
-        self._require_category(category_id)
+        category = self._require_category(category_id)
+        if category.payment_account_id is not None:
+            raise LedgerError(
+                "credit payment categories cannot categorize transactions"
+            )
 
     def _payee_by_name(self, name: str, *, structural: bool = False) -> Payee:
         for payee in self.payees.values():
@@ -1106,6 +1163,27 @@ class Plan:
         payee = Payee(self._new_id("payee"), name, structural)
         self.payees[payee.id] = payee
         return payee
+
+    def _transfer_payee(self, account: Account) -> Payee:
+        """Each account owns one structural transfer payee, keyed by account
+        id rather than name (api.yaml: Account.transfer_payee_id)."""
+        for payee in self.payees.values():
+            if payee.transfer_account_id == account.id:
+                return payee
+        payee = Payee(
+            self._new_id("payee"),
+            f"Transfer: {account.name}",
+            structural=True,
+            transfer_account_id=account.id,
+        )
+        self.payees[payee.id] = payee
+        return payee
+
+    def _require_open_account(self, account_id: str) -> Account:
+        account = self._require_account(account_id)
+        if account.closed:
+            raise LedgerError(f"account {account_id!r} is closed")
+        return account
 
     def _require_payee(self, payee_id: str) -> Payee:
         payee = self.payees.get(payee_id)

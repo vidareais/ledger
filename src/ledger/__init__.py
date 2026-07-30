@@ -28,7 +28,13 @@ from ledger.targets import (
     required_payment,
     total_interest,
 )
-from ledger.transactions import RTA_INFLOW, ClearedStatus, SplitLine, Transaction
+from ledger.transactions import (
+    RTA_INFLOW,
+    ClearedStatus,
+    FlagColor,
+    SplitLine,
+    Transaction,
+)
 
 __all__ = [
     "PAYMENT_GROUP_ID",
@@ -46,6 +52,7 @@ __all__ = [
     "CustomSubMode",
     "CustomTarget",
     "DebtPaymentTarget",
+    "FlagColor",
     "Frequency",
     "JsonPlanStore",
     "LedgerError",

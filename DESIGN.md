@@ -3,7 +3,10 @@
 A pure-Python budgeting engine implementing envelope-style (YNAB-like) budget
 mechanics. Every rule in this document was derived from black-box behavioral
 observation of a reference app; numeric examples are verified data points and
-should become unit-test fixtures.
+should become unit-test fixtures. The repository also carries `api.yaml`, an
+OpenAPI description of the same product family; where observation was silent,
+its schemas are treated as authoritative and rules taken from it are marked
+(api.yaml).
 
 **Scope: engine only.** This library will never grow a UI. It exposes a
 deterministic, in-memory domain model with explicit operations. Out of scope
@@ -53,6 +56,9 @@ separate storage locations.
   `NetWorth = Σ balances of CASH + CREDIT + LOANS + TRACKING accounts`.
 - Orthogonal flag: *linked* (bank-connected) vs. *unlinked* (manual). No
   effect on budget math.
+- Accounts carry a free-text note and can be **closed** (api.yaml): history
+  stays fully queryable, but new transactions, transfers, and schedules are
+  refused, and the account's existing schedules are removed at close.
 
 ## 3. Ready to Assign (RTA)
 
@@ -143,6 +149,10 @@ category:
 - **Record Payment** is the ordinary transfer mechanism (cash account →
   credit account) forced to use the linked payment category, which drains
   that category's Available and reduces the card's negative balance.
+- Payment categories can be assigned to and hold budgeted money, but can
+  never be used to *categorize* a transaction, split, or schedule
+  (api.yaml) — the earmarking flow above is the only way spending money
+  enters them.
 
 ### 5.4 Loan accounts
 
@@ -242,7 +252,9 @@ separately from the persistent target object.
 
 Two fundamentally different algorithm families. Whole-budget invocations go
 through a preview (dry-run) then apply as **one atomic multi-category batch**;
-per-category invocations apply immediately.
+per-category invocations apply immediately. Hidden categories — or
+categories whose whole group is hidden — are skipped by both families
+(api.yaml).
 
 ### 7.1 "Underfunded": greedy top-to-bottom walk
 
@@ -381,8 +393,7 @@ Not covered by observation; decide or verify before implementing:
 
 - **Credit overspending**: rollover rule for overspending charged on a
   credit account (unbudgeted debt) — the §4.2 experiment covered cash only.
-- **Loan payoff simulator** and **account exclusion/deletion** flows: never
-  exercised.
+- **Loan payoff simulator**: never exercised.
 - **Targets on credit-card payment categories**: interaction untested.
 - **Weekly targets across a month boundary**: untested.
 - Search/filtering beyond the built-in tabs, reports, multi-currency: out of

@@ -13,6 +13,7 @@ class Category:
     note: str = ""
     target: Target | None = None
     payment_account_id: str | None = None
+    hidden: bool = False
 
     @property
     def is_payment_category(self) -> bool:
@@ -24,3 +25,5 @@ class CategoryGroup:
     id: str
     name: str
     category_ids: list[str] = field(default_factory=list[str])
+    hidden: bool = False
+    internal: bool = False

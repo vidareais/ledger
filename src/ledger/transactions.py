@@ -15,6 +15,15 @@ class ClearedStatus(Enum):
     RECONCILED = auto()
 
 
+class FlagColor(Enum):
+    RED = auto()
+    ORANGE = auto()
+    YELLOW = auto()
+    GREEN = auto()
+    BLUE = auto()
+    PURPLE = auto()
+
+
 @dataclass(frozen=True)
 class SplitLine:
     category_id: str
@@ -34,6 +43,7 @@ class Transaction:
     transfer_id: str | None = None
     status: ClearedStatus = ClearedStatus.UNCLEARED
     approved: bool = True
+    flag_color: FlagColor | None = None
     memo: str = ""
 
     def lines(self) -> tuple[tuple[str, Decimal], ...]:
