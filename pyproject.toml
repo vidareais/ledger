@@ -1,7 +1,7 @@
 [project]
 name = "ledger"
 version = "0.1.0"
-description = "Add your description here"
+description = "A pure-Python envelope-budgeting engine: ledger-first, deterministic, and UI-free"
 readme = "README.md"
 authors = [
     { name = "tarcisio", email = "20189+tarcisio@users.noreply.github.com" }
